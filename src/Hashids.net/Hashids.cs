@@ -1,5 +1,5 @@
-using System.Collections.Generic;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -29,6 +29,8 @@ namespace HashidsNet
         private readonly StringBuilderPool _sbPool = new();
 
         // Using Lazy<T> means the Regex won't be init until it's actually first-used, which speeds up first use of non-hex methods
+
+        /// <summary><c>[\w\W]{1,12}</c> matches any sequence of word char and non-word chars between 1 and 12 (inclusive) in length.</summary>
         private static readonly Lazy<Regex> hexSplitter = new(() => new Regex(@"[\w\W]{1,12}", RegexOptions.Compiled));
 
         /// <summary>
