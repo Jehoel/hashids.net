@@ -1,10 +1,19 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Title>Hashids.net</Title>
-        <Authors>Markus Ullmark</Authors>
         <Version>1.4.1</Version>
+        <TargetFrameworks>net461;netstandard2.0;net5.0;</TargetFrameworks>
+        <OutputType>Library</OutputType>
+        <LangVersion>9</LangVersion>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <!-- CS1591: Missing XML comment for publicly visible type or member -->
+        <NoWarn>$(NoWarn);CS1591</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup Label="NuGet Package">
+        <Title>Hashids.net</Title>
         <PackageVersion>1.4.1</PackageVersion>
+        <Authors>Markus Ullmark</Authors>
         <Description>Generate YouTube-like hashes from one or many numbers. Use hashids when you do not want to expose your database ids to the user.</Description>
         <PackageIconUrl>https://raw.githubusercontent.com/ullmark/hashids.net/master/hashids.png</PackageIconUrl>
         <PackageProjectUrl>https://github.com/ullmark/hashids.net</PackageProjectUrl>
@@ -13,19 +22,20 @@
         <PackageTags>ids;hash</PackageTags>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/ullmark/hashids.net</RepositoryUrl>
-        <TargetFrameworks>net461;net5.0;netstandard2.0</TargetFrameworks>
-        <OutputType>Library</OutputType>
-        <LangVersion>9</LangVersion>
-        <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-        <GenerateDocumentationFile>true</GenerateDocumentationFile>
-        <!-- CS1591: Missing XML comment for publicly visible type or member -->
-        <NoWarn>$(NoWarn);CS1591</NoWarn>
+        <IncludeSymbols>true</IncludeSymbols>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(TargetFramework)' != 'net5.0'">
+        <!-- CS8632: The annotation for nullable reference types should only be used in code within a '#nullable' annotations context. -->
+        <NoWarn>$(NoWarn);CS8632</NoWarn>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net5.0'">
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="System.Buffers" Version="4.5.1" />
+        <PackageReference Include="System.Buffers" Version="4.5.1" />
     </ItemGroup>
 
 </Project>

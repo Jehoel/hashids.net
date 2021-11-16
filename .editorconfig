@@ -1,6 +1,12 @@
 # top-most EditorConfig file
 root = true
 
+
+[*.csproj]
+end_of_line = lf
+indent_style = space
+indent_size = 4
+
 [*.cs]
 end_of_line = lf
 indent_style = space
