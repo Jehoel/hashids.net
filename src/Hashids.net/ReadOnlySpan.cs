@@ -7,7 +7,7 @@ namespace HashidsNet
 #if !NETCOREAPP3_1_OR_GREATER
     internal struct ReadOnlySpan<T> : IReadOnlyList<T>
     {
-        public static implicit operator ReadOnlySpan<T>(T[] array)
+        public static implicit operator ReadOnlySpan<T>(T[]? array)
         {
             return new ReadOnlySpan<T>(array);
         }
@@ -26,14 +26,16 @@ namespace HashidsNet
         private readonly int startIndex;
         private readonly int count;
 
-        public ReadOnlySpan(T[] array)
+        public ReadOnlySpan(T[]? array)
             : this(array, startIndex: 0, count: array?.Length ?? 0)
         {
         }
 
-        public ReadOnlySpan(T[] array, int startIndex, int count)
+        public ReadOnlySpan(T[]? array, int startIndex, int count)
         {
-            this.array      = array ?? Array.Empty<T>();
+            array ??= Array.Empty<T>();
+
+            this.array      = array;
             this.startIndex = startIndex;
             this.count      = count;
 

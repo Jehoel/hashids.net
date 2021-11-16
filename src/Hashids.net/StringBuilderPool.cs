@@ -7,7 +7,7 @@ namespace HashidsNet
     {
         private readonly ConcurrentBag<StringBuilder> _builders = new();
 
-        public StringBuilder Get() => _builders.TryTake(out StringBuilder sb) ? sb : new();
+        public StringBuilder Get() => _builders.TryTake(out StringBuilder? sb) ? sb : new();
 
         public void Return(StringBuilder sb)
         {
