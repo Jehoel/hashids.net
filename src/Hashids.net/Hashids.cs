@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -148,33 +148,35 @@ namespace HashidsNet
             }
         }
 
+        #region Public entrypoints
+
         /// <summary>
         /// Encodes the provided numbers into a hash string.
         /// </summary>
         /// <param name="numbers">List of integers.</param>
         /// <returns>Encoded hash string.</returns>
-        public virtual string Encode(params int[] numbers) => GenerateHashFrom(Array.ConvertAll(numbers, n => (long)n));
+        public virtual string Encode(params int[] numbers) => EncodeInt32ValuesImpl(numbers);
 
         /// <summary>
         /// Encodes the provided numbers into a hash string.
         /// </summary>
         /// <param name="numbers">Enumerable list of integers.</param>
         /// <returns>Encoded hash string.</returns>
-        public virtual string Encode(IEnumerable<int> numbers) => Encode(numbers.ToArray());
+        public virtual string Encode(IEnumerable<int> numbers) => EncodeInt32ValuesImpl(numbers);
 
         /// <summary>
         /// Encodes the provided numbers into a hash string.
         /// </summary>
         /// <param name="numbers">List of 64-bit integers.</param>
         /// <returns>Encoded hash string.</returns>
-        public string EncodeLong(params long[] numbers) => GenerateHashFrom(numbers);
+        public string EncodeLong(params long[] numbers) => EncodeInt64ValuesImpl(numbers);
 
         /// <summary>
         /// Encodes the provided numbers into a hash string.
         /// </summary>
         /// <param name="numbers">Enumerable list of 64-bit integers.</param>
         /// <returns>Encoded hash string.</returns>
-        public string EncodeLong(IEnumerable<long> numbers) => EncodeLong(numbers.ToArray());
+        public string EncodeLong(IEnumerable<long> numbers) => EncodeInt64ValuesImpl(numbers);
 
         /// <summary>
         /// Decodes the provided hash into <see cref="Int32"/> numbers.
@@ -207,12 +209,30 @@ namespace HashidsNet
             for (int i = 0; i < numbers.Length; i++)
             {
                 Match match = matches[i];
-                string concat = string.Concat("1", match.Value);
+                string concat = string.Concat("1", match.Value); // TODO: Why append '1'?
                 var number = Convert.ToInt64(concat, fromBase: 16);
                 numbers[i] = number;
             }
 
             return EncodeLong(numbers);
+        }
+
+        #endregion
+
+        private string EncodeInt64ValuesImpl(IEnumerable<long> numbers)
+        {
+            using (RentedBuffer.RentCopy(source: numbers, out ArraySegment<long> i64Array))
+            {
+                return GenerateHashFrom(i64Array);
+            }
+        }
+
+        private string EncodeInt32ValuesImpl(IEnumerable<int> numbers)
+        {
+            using (RentedBuffer.RentProjectedCopy(source: numbers, array: out ArraySegment<long> i64Array, valueSelector: i32 => (Int64)i32))
+            {
+                return GenerateHashFrom(i64Array);
+            }
         }
 
         /// <summary>Indicates if <paramref name="value"/> is a non-null, non-empty string containing only an even number of hexadecimal (base 16) digit characters (<c>0, 1, 2, 3, 4, 5, 6, 7, 8, 9, A, B, C, D, E, F</c>).</summary>
@@ -244,8 +264,9 @@ namespace HashidsNet
         /// <returns>Decoded hex string.</returns>
         public virtual string DecodeHex(string hash)
         {
-            var builder = _sbPool.Get();
             var numbers = DecodeLong(hash);
+
+            var builder = _sbPool.Get();
 
             foreach (var number in numbers)
             {
@@ -275,11 +296,14 @@ namespace HashidsNet
 
             var builder = _sbPool.Get();
 
-            using(RentedBuffer.Rent    (_alphabet.Length   , out char[] shuffleBuffer))
-            using(RentedBuffer.RentCopy(_alphabet          , out char[] alphabet))
-            using(RentedBuffer.Rent    (MaxNumberHashLength, out char[] hashBuffer))
+            using(RentedBuffer.Rent    (_alphabet.Length   , out ArraySegment<char> shuffleBuffer))
+            using(RentedBuffer.RentCopy(_alphabet          , out ArraySegment<char> alphabet))
+            using(RentedBuffer.Rent    (MaxNumberHashLength, out ArraySegment<char> hashBuffer))
             {
-                var lottery = alphabet[numbersHashInt % _alphabet.Length];
+                System.Diagnostics.Debug.Assert(alphabet.Count == _alphabet.Length); // Just a reminder.
+
+                int lotteryIdx = (int)(numbersHashInt % _alphabet.Length);
+                var lottery = alphabet[lotteryIdx];
                 builder.Append(lottery);
                 InitShuffleBuffer(shuffleBuffer, lottery, _salt);
 
@@ -292,10 +316,10 @@ namespace HashidsNet
 
                     if (length > 0)
                     {
-                        Array.Copy(alphabet, 0, shuffleBuffer, startIndex, length);
+                        Array.Copy(sourceArray: alphabet.Array!, sourceIndex: 0, shuffleBuffer.Array!, destinationIndex: shuffleBuffer.Offset + startIndex, length: length);
                     }
                     
-                    ConsistentShuffle(alphabet, _alphabet.Length, shuffleBuffer, _alphabet.Length);
+                    ConsistentShuffle(alphabet, salt: shuffleBuffer, saltLength: _alphabet.Length); // TODO: Is `saltLength` really correct here? Why isn't it `shuffleBuffer.Count` instead?
                     var hashLength = BuildReversedHash(number, alphabet, hashBuffer);
 
                     for (var j = hashLength - 1; j > -1; j--)
@@ -332,10 +356,11 @@ namespace HashidsNet
 
                 while (builder.Length < _minHashLength)
                 {
-                    Array.Copy(alphabet, shuffleBuffer, _alphabet.Length);
-                    ConsistentShuffle(alphabet, _alphabet.Length, shuffleBuffer, _alphabet.Length);
-                    builder.Insert(0, alphabet, halfLength, _alphabet.Length - halfLength);
-                    builder.Append(alphabet, 0, halfLength);
+                    alphabet.CopyTo(shuffleBuffer);
+
+                    ConsistentShuffle(alphabet, salt: shuffleBuffer, saltLength: _alphabet.Length);
+                    builder.Insert(index: 0, charsSegment: alphabet, charsSegmentOffset: halfLength, charCount: _alphabet.Length - halfLength);
+                    builder.Append(charsSegment: alphabet, charsSegmentOffset: 0, charCount: halfLength);
 
                     var excess = builder.Length - _minHashLength;
                     if (excess > 0)
@@ -351,7 +376,7 @@ namespace HashidsNet
             return result;
         }
 
-        private int BuildReversedHash(long input, ReadOnlySpan<char> alphabet, char[] hashBuffer)
+        private int BuildReversedHash(long input, ReadOnlySpan<char> alphabet, ArraySegment<char> hashBuffer)
         {
             var length = 0;
             do
@@ -372,7 +397,7 @@ namespace HashidsNet
 
             for (var i = 0; i < input.Length; i++)
             {
-                var pos = alphabet.IndexOf(input[i]);
+                var pos = alphabet.IndexOf(input[i]); // TODO: Use a dictionary for O(1) lookup... provided alphabet is longer than... 10 chars?
                 number = (number * _alphabet.Length) + pos;
             }
 
@@ -388,9 +413,9 @@ namespace HashidsNet
             if (hashArray.Length == 0)
                 return Array.Empty<long>();
 
-            var i = (hashArray.Length is 3 or 2 ) ? 1 : 0;
+            var hashBreakdownIdx = (hashArray.Length is 3 or 2 ) ? 1 : 0;
 
-            var hashBreakdown = hashArray[i];
+            var hashBreakdown = hashArray[hashBreakdownIdx];
             var lottery = hashBreakdown[0];
 
             if (lottery == '\0') /* default(char) == '\0' */
@@ -402,13 +427,13 @@ namespace HashidsNet
 
             var result = new long[hashArray.Length];
 
-            using(RentedBuffer.RentCopy(_alphabet       , out char[] alphabet))
-            using(RentedBuffer.Rent    (_alphabet.Length, out char[] buffer))
+            using(RentedBuffer.RentCopy(_alphabet       , out ArraySegment<char> alphabet))
+            using(RentedBuffer.Rent    (_alphabet.Length, out ArraySegment<char> buffer))
             {
                 InitShuffleBuffer(buffer, lottery, _salt);
 
                 var startIndex = 1 + _salt.Length;
-                var length = _alphabet.Length - startIndex;
+                var length = _alphabet.Length - startIndex; // TODO: What is this the length of, exactly?
 
                 for (var j = 0; j < hashArray.Length; j++)
                 {
@@ -416,10 +441,10 @@ namespace HashidsNet
 
                     if (length > 0)
                     {
-                        Array.Copy(alphabet, 0, buffer, startIndex, length);
+                        alphabet.CopyTo(buffer.Slice(index: startIndex, count: length));
                     }
 
-                    ConsistentShuffle(alphabet, _alphabet.Length, buffer, _alphabet.Length);
+                    ConsistentShuffle(alphabetSegment: alphabet, salt: buffer, saltLength: _alphabet.Length); // TODO: Hold on, why is `saltLength` *not* `buffer.Length`?
                     result[j] = Unhash(subHash, alphabet);
                 }
             }
@@ -433,11 +458,11 @@ namespace HashidsNet
         }
 
         /// <summary>Sets <c><paramref name="shuffleBuffer"/>[0] = <paramref name="lottery"/></c>, and then copies chars from <c>offset: 0</c> in <paramref name="salt"/> into <paramref name="shuffleBuffer"/> (from <c>offset: 1</c>).</summary>
-        private static void InitShuffleBuffer(char[] shuffleBuffer, char lottery, ReadOnlySpan<char> salt)
+        private static void InitShuffleBuffer(ArraySegment<char> shuffleBuffer, char lottery, ReadOnlySpan<char> salt)
         {
             shuffleBuffer[0] = lottery;
 
-            int copyCount = Math.Min(salt.Length, shuffleBuffer.Length - 1);
+            int copyCount = Math.Min(salt.Length, shuffleBuffer.Count - 1);
 
             for (int i = 0; i < copyCount; i++)
             {
@@ -445,8 +470,14 @@ namespace HashidsNet
             }
         }
 
+        /// <summary>NOTE: This method mutates the <paramref name="alphabetSegment"/> argument in-place.</summary>
+        private static void ConsistentShuffle(ArraySegment<char> alphabetSegment, ReadOnlySpan<char> salt, int saltLength)
+        {
+            ConsistentShuffle(alphabetSegment.Array!, alphabetSegment.Count, salt, saltLength);
+        }
+
         /// <summary>NOTE: This method mutates the <paramref name="alphabet"/> argument in-place.</summary>
-        private static void ConsistentShuffle(char[] alphabet, int alphabetLength, ReadOnlySpan<char> salt, int saltLength)
+        private static void ConsistentShuffle(char[] alphabet, int alphabetLength, ReadOnlySpan<char> salt, int saltLength) // TODO: Why is `saltLength` a parameter at all? Why not use `salt.Length` instead?
         {
             if (salt.Length == 0)
                 return;

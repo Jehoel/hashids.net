@@ -1,7 +1,6 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 
 namespace HashidsNet
 {
@@ -67,30 +66,182 @@ namespace HashidsNet
             return false;
         }
 #endif
+
+        public static System.Text.StringBuilder Insert(this System.Text.StringBuilder sb, int index, ArraySegment<char> charsSegment, int charsSegmentOffset, int charCount)
+        {
+            char[] array = charsSegment.Array!;
+            int startIndex = charsSegment.Offset + charsSegmentOffset;
+            return sb.Insert(index: index, value: array, startIndex: startIndex, charCount: charCount);
+        }
+
+        public static System.Text.StringBuilder Append(this System.Text.StringBuilder sb, ArraySegment<char> charsSegment, int charsSegmentOffset, int charCount)
+        {
+            char[] array = charsSegment.Array!;
+            int startIndex = charsSegment.Offset + charsSegmentOffset;
+            return sb.Append(value: array, startIndex: startIndex, charCount: charCount);
+        }
+
+#if !NETCOREAPP3_1_OR_GREATER
+        public static void CopyTo<T>(this ArraySegment<T> source, ArraySegment<T> destination)
+        {
+            Array.Copy(sourceArray: source.Array!, sourceIndex: source.Offset, destinationArray: destination.Array, destinationIndex: destination.Offset, length: source.Count);
+        }
+
+        public static void CopyTo<T>(this ArraySegment<T> source, ArraySegment<T> destination, int count)
+        {
+            Array.Copy(sourceArray: source.Array!, sourceIndex: source.Offset, destinationArray: destination.Array, destinationIndex: destination.Offset, length: count);
+        }
+
+        public static ArraySegment<T> Slice<T>(this ArraySegment<T> source, int index, int count)
+        {
+            {
+                int sourceLength   = source.Array.Length;
+                int requiredLength = source.Offset + index + count;
+                if (requiredLength > sourceLength) throw new ArgumentOutOfRangeException(paramName: nameof(count), actualValue: count, message: "Value exceeds underlying array size.");
+            }
+
+            return new ArraySegment<T>(array: source.Array, offset: source.Offset + index, count: count);
+        }
+#endif
     }
 
     internal static class RentedBuffer
     {
         /// <summary>Rents a new buffer from <see cref="ArrayPool{T}.Shared"/> and wraps it in a <see cref="RentedBuffer{T}"/>, wrap it in a <c>using</c> block for fire-and-forget safety so you don't need to forget to call <see cref="ArrayPool{T}.Return(T[], bool)"/>.</summary>
-        public static RentedBuffer<T> Rent<T>(int length, out T[] array)
+        public static RentedBuffer<T> Rent<T>(int length, out ArraySegment<T> segment)
         {
             RentedBuffer<T> rented = new RentedBuffer<T>(length);
-            array = rented.Array;
+            segment = rented.AsArraySegment();
             return rented;
         }
 
-        /// <summary>Rents a new buffer from <see cref="ArrayPool{T}.Shared"/> with (at least) <paramref name="source"/>'s length, and then copies <paramref name="source"/> into the output <paramref name="array"/>.</summary>
-        public static RentedBuffer<T> RentCopy<T>(T[] source, out T[] array)
+        /// <summary>Rents a new buffer from <see cref="ArrayPool{T}.Shared"/> with (at least) <paramref name="sourceArray"/>'s length, and then copies <paramref name="sourceArray"/> into the output <paramref name="array"/>.</summary>
+        public static RentedBuffer<T> RentCopy<T>(T[] sourceArray, out ArraySegment<T> segment)
         {
-            RentedBuffer<T> rented = new RentedBuffer<T>(source.Length);
-            array = rented.Array;
-            Array.Copy(sourceArray: source, sourceIndex: 0, destinationArray: array, destinationIndex: 0, length: source.Length);
+            RentedBuffer<T> rented = new RentedBuffer<T>(sourceArray.Length);
+            Array.Copy(sourceArray: sourceArray, sourceIndex: 0, destinationArray: rented.Array, destinationIndex: 0, length: sourceArray.Length);
+            segment = rented.AsArraySegment();
             return rented;
+        }
+
+        /// <summary>Attempts to get the length of <paramref name="source"/> and uses that to rents a new buffer from <see cref="ArrayPool{T}.Shared"/> with (at least) <paramref name="source"/>'s length, and then copies <paramref name="source"/> into the output <paramref name="array"/>. If the length isn't known then <paramref name="source"/> is loaded into a <see cref="List{T}"/> as an intermediate step.</summary>
+        public static RentedBuffer<T> RentCopy<T>(IEnumerable<T> source, out ArraySegment<T> segment)
+        {
+            if (source is null)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+            else if (source is T[] sourceArray)
+            {
+                return RentCopy<T>(sourceArray: sourceArray, out segment);
+            }
+            else if (source is IList<T> sourceMutableList) // Annoyingly, IList<T> does not implement `IReadOnlyCollection<T>`.
+            {
+                RentedBuffer<T> rented = new RentedBuffer<T>(length: sourceMutableList.Count);
+                segment = rented.AsArraySegment();
+                sourceMutableList.CopyTo(segment.Array!, arrayIndex: segment.Offset);
+                return rented;
+            }
+            else if (source is IReadOnlyCollection<T> sourceRO)
+            {
+                RentedBuffer<T> rented = new RentedBuffer<T>(length: sourceRO.Count);
+                segment = rented.AsArraySegment();
+
+                {
+                    T[] array = segment.Array!;
+                    int i = segment.Offset;
+                    foreach (T item in sourceRO )
+                    {
+                        array[i] = item;
+                        i += 1;
+                    }
+                }
+                
+                return rented;
+            }
+            else
+            {
+                List<T> asList = System.Linq.Enumerable.ToList(source);
+
+                RentedBuffer<T> rented = new RentedBuffer<T>(length: asList.Count);
+                segment = rented.AsArraySegment();
+
+                asList.CopyTo(segment.Array!, arrayIndex: segment.Offset);
+
+                return rented;
+            }
+        }
+
+        public static RentedBuffer<TOut> RentProjectedCopy<TIn,TOut>(IEnumerable<TIn> source, out ArraySegment<TOut> segment, Func<TIn,TOut> valueSelector)
+        {
+            if (source is null) throw new ArgumentNullException(nameof(source));
+            if (valueSelector is null) throw new ArgumentNullException(nameof(valueSelector));
+
+            //
+
+            if (TryGetNonEnumeratedCount(source, out int count))
+            {
+                RentedBuffer<TOut> rented = new RentedBuffer<TOut>(length: count);
+                segment = rented.AsArraySegment();
+
+                {
+                    TOut[] array = segment.Array;
+                    int i = segment.Offset;
+                    foreach ( TIn item in source )
+                    {
+                        array[i] = valueSelector(item);
+                        i += 1;
+                    }
+                }
+
+                return rented;
+            }
+            else
+            {
+                List<TOut> asList = new List<TOut>();
+                
+                foreach ( TIn item in source )
+                {
+                    asList.Add(valueSelector(item));
+                }
+
+                return RentCopy<TOut>(source: asList, out segment);
+            }
+        }
+
+        private static bool TryGetNonEnumeratedCount<T>(IEnumerable<T> source, out int count)
+        {
+            if (source is T[] array)
+            {
+                count = array.Length;
+                return true;
+            }
+            else if (source is IList<T> sourceMutableList) // Includes TIn[], List<TIn>, ImmutableList<TIn> (surprisingly!), and more.
+            {
+                count = sourceMutableList.Count;
+                return true;
+            }
+            else if (source is IReadOnlyCollection<T> sourceRO)
+            {
+                count = sourceRO.Count;
+                return true;
+            }
+            else
+            {
+                count = -1;
+                return false;
+            }
         }
     }
 
-    internal ref struct RentedBuffer<T>// : IDisposable
+    /// <summary>Is implicitly convertible to <see cref="ArraySegment{T}"/>.</summary>
+    internal readonly ref struct RentedBuffer<T>// : IDisposable
     {
+        public static implicit operator ArraySegment<T>(RentedBuffer<T> self)
+        {
+            return self.AsArraySegment();
+        }
+
         private readonly int length;
         private readonly T[] array; // Careful, don't use `array.Length` as it can be larger than `this.length`!
 
@@ -100,13 +251,23 @@ namespace HashidsNet
             this.array = ArrayPool<T>.Shared.Rent(length);
         }
 
+        /// <summary>NOTE: Do not use <c><see cref="Array"/>.<see cref="Array.Length"/></c> as it will likely exceed <see cref="Length"/>.</summary>
         public T[] Array  => this.array;
         public int Length => this.length;
         public int Count  => this.length;
 
         public void Dispose()
         {
-            ArrayPool<T>.Shared.Return(this.array);
+            if (this.array is not null) // Don't return `this.array` when `this == default(RentedBuffer<T>)`.
+            {
+                ArrayPool<T>.Shared.Return(this.array);
+            }
+        }
+
+        /// <summary>WARNING: Ensure that the <see cref="ArraySegment{T}"/> does not outlive this <see cref="RentedBuffer{T}"/>.</summary>
+        public ArraySegment<T> AsArraySegment()
+        {
+            return new ArraySegment<T>(array: this.array, offset: 0, count: this.length);
         }
     }
 }
