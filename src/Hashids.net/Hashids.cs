@@ -2,7 +2,6 @@
 using System;
 using System.Linq;
 using System.Text.RegularExpressions;
-using System.Buffers;
 
 namespace HashidsNet
 {
@@ -14,6 +13,7 @@ namespace HashidsNet
         public const string DEFAULT_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
         public const string DEFAULT_SEPS = "cfhistuCFHISTU";
         public const int MIN_ALPHABET_LENGTH = 16;
+        public const int MAX_HASH_LENGTH = 1024; // To prevent consumers with silly bugs nuking their memory.
 
         private const double SEP_DIV = 3.5;
         private const double GUARD_DIV = 12.0;
@@ -28,7 +28,8 @@ namespace HashidsNet
 
         private readonly StringBuilderPool _sbPool = new();
 
-        // Creates the Regex in the first usage, speed up first use of non-hex methods
+        // Using Lazy<T> means the Regex won't be init until it's actually first-used, which speeds up first use of non-hex methods
+
         private static readonly Lazy<Regex> hexValidator = new(() => new Regex("^[0-9a-fA-F]+$", RegexOptions.Compiled));
         private static readonly Lazy<Regex> hexSplitter = new(() => new Regex(@"[\w\W]{1,12}", RegexOptions.Compiled));
 
@@ -44,24 +45,29 @@ namespace HashidsNet
         /// Instantiates a new Hashids encoder/decoder.
         /// All parameters are optional and will use defaults unless otherwise specified.
         /// </summary>
-        /// <param name="salt"></param>
-        /// <param name="minHashLength"></param>
-        /// <param name="alphabet"></param>
-        /// <param name="seps"></param>
+        /// <param name="salt">Must not be <see langword="null"/> but can be empty (<see cref="string.Empty"/>). Default value is <see cref="string.Empty"/>.</param>
+        /// <param name="minHashLength">Must be in the range <c>0-1024</c> (<see cref="MAX_HASH_LENGTH"/>). Can be zero. Default is zero.</param>
+        /// <param name="alphabet">String of characters to use when generating output strings.<br />Must contain at least <see cref="MIN_ALPHABET_LENGTH"/> distinct characters.<br />Must not be <see langword="null"/>, empty, or whitespace.<br />Default value is <see cref="DEFAULT_ALPHABET"/>.</param>
+        /// <param name="seps">String of possible characters to use as separators between values in generated hashid strings. Every character in <paramref name="seps"/> must also appear in <paramref name="alphabet"/>. Must not be <see langword="null"/>, empty, or whitespace.<br />Default value is <see cref="DEFAULT_SEPS"/>.</param>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="salt"/>, <paramref name="seps"/>, or <paramref name="alphabet"/> is <see langword="null"/>.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="minHashLength"/> is outside the range <c>0-<see cref="MAX_HASH_LENGTH"/></c>.</exception>
+        /// <exception cref="ArgumentException">Thrown when <paramref name="salt"/>, <paramref name="seps"/>, or <paramref name="alphabet"/> are non-<see langword="null"/> but are otherwise invalid.</exception>
         public Hashids(
             string salt = "",
             int minHashLength = 0,
             string alphabet = DEFAULT_ALPHABET,
             string seps = DEFAULT_SEPS)
         {
-            if (salt == null)
-                throw new ArgumentNullException(nameof(salt));
-            if (string.IsNullOrWhiteSpace(alphabet))
-                throw new ArgumentNullException(nameof(alphabet));
-            if (minHashLength < 0)
-                throw new ArgumentOutOfRangeException(nameof(minHashLength), "Value must be zero or greater.");
-            if (string.IsNullOrWhiteSpace(seps))
-                throw new ArgumentNullException(nameof(seps));
+            if (salt     is null) throw new ArgumentNullException(nameof(salt));
+            if (alphabet is null) throw new ArgumentNullException(nameof(alphabet));
+            if (seps     is null) throw new ArgumentNullException(nameof(seps));
+                
+            if (string.IsNullOrWhiteSpace(alphabet)) throw new ArgumentException(message: "Value cannot be null, empty nor whitespace.", paramName: nameof(alphabet));
+            if (string.IsNullOrWhiteSpace(seps)    ) throw new ArgumentException(message: "Value cannot be null, empty nor whitespace.", paramName: nameof(seps)    );
+                
+            if (minHashLength < 0 || minHashLength > MAX_HASH_LENGTH) throw new ArgumentOutOfRangeException(paramName: nameof(minHashLength), actualValue: minHashLength, message: "Value must be in the range 0 to 1024.");
+
+            //
 
             _salt = salt.Trim().ToCharArray();
             _minHashLength = minHashLength;
@@ -69,7 +75,7 @@ namespace HashidsNet
             InitCharArrays(alphabet: alphabet, seps: seps, salt: _salt, alphabetChars: out _alphabet, sepChars: out _seps, guardChars: out _guards);
         }
 
-        /// <remarks>This method uses <c>out</c> params instead of returning a ValueTuple so it works with .NET 4.6.1.</remarks>
+        /// <remarks>This method uses <c>out</c> params instead of returning a <c>ValueTuple</c> so it works with .NET 4.6.1.</remarks>
         private static void InitCharArrays(string alphabet, string seps, ReadOnlySpan<char> salt, out char[] alphabetChars, out char[] sepChars, out char[] guardChars)
         {
             alphabetChars = alphabet.ToCharArray().Distinct().ToArray();
@@ -97,7 +103,7 @@ namespace HashidsNet
             if (alphabetChars.Length < (MIN_ALPHABET_LENGTH - 6))
             {
                 #warning TODO: What should the minimum length be after removing chars in `sep`?
-                throw new ArgumentException($"Alphabet must contain at least {MIN_ALPHABET_LENGTH:N0} unique characters that are also not present in .", paramName: nameof(alphabet));
+                throw new ArgumentException($"Alphabet must contain at least {MIN_ALPHABET_LENGTH:N0} unique characters that are also not present in the separators list.", paramName: nameof(alphabet));
             }
 
             ConsistentShuffle(alphabet: sepChars, alphabetLength: sepChars.Length, salt: salt, saltLength: salt.Length);
