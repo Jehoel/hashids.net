@@ -12,10 +12,11 @@
 
     <PropertyGroup Label="NuGet Package">
         <Title>Hashids.net</Title>
-        <PackageVersion>1.4.1</PackageVersion>
+        <PackageVersion>$(Version)</PackageVersion>
         <Authors>Markus Ullmark</Authors>
         <Description>Generate YouTube-like hashes from one or many numbers. Use hashids when you do not want to expose your database ids to the user.</Description>
         <PackageIconUrl>https://raw.githubusercontent.com/ullmark/hashids.net/master/hashids.png</PackageIconUrl>
+        <PackageIcon>PackageIcon.png</PackageIcon>
         <PackageProjectUrl>https://github.com/ullmark/hashids.net</PackageProjectUrl>
         <PackageReleaseNotes>https://github.com/ullmark/hashids.net#changelog</PackageReleaseNotes>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -36,6 +37,8 @@
 
     <ItemGroup>
         <PackageReference Include="System.Buffers" Version="4.5.1" />
+        
+        <None Include="PackageIcon.png" Pack="true" PackagePath="" />
     </ItemGroup>
 
 </Project>
