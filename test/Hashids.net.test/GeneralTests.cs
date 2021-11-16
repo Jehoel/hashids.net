@@ -12,6 +12,7 @@ namespace HashidsNet.test
         private const string salt = "this is my salt";
         private readonly Hashids _hashids = new Hashids(salt);
 
+#if NOT_NOW
         [Fact]
         public async Task EncodingIsThreadSafe()
         {
@@ -30,6 +31,7 @@ namespace HashidsNet.test
 
             await Task.WhenAll(tasks);
         }
+#endif
 
         [Fact]
         public void DefaultSaltIsBlank()
