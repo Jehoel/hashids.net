@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -29,8 +29,6 @@ namespace HashidsNet
         private readonly StringBuilderPool _sbPool = new();
 
         // Using Lazy<T> means the Regex won't be init until it's actually first-used, which speeds up first use of non-hex methods
-
-        private static readonly Lazy<Regex> hexValidator = new(() => new Regex("^[0-9a-fA-F]+$", RegexOptions.Compiled));
         private static readonly Lazy<Regex> hexSplitter = new(() => new Regex(@"[\w\W]{1,12}", RegexOptions.Compiled));
 
         /// <summary>
@@ -192,14 +190,13 @@ namespace HashidsNet
         public long[] DecodeLong(string hash) => GetNumbersFrom(hash);
 
         /// <summary>
-        /// Encodes the provided hex-string into a hash string.
+        /// Encodes the provided hex-string into a hash string. Returns <see cref="string.Empty"/> when <paramref name="hex"/> is null, empty or otherwise invalid.
         /// </summary>
         /// <param name="hex">Hex string to encode.</param>
         /// <returns>Encoded hash string.</returns>
-        public virtual string EncodeHex(string hex)
+        public virtual string EncodeHex(string? hex)
         {
-            if (string.IsNullOrWhiteSpace(hex) || !hexValidator.Value.IsMatch(hex))
-                return string.Empty;
+            if (!IsNonemptyHexString(hex)) return string.Empty;
 
             var matches = hexSplitter.Value.Matches(hex);
             if (matches.Count == 0) return string.Empty;
@@ -214,6 +211,28 @@ namespace HashidsNet
             }
 
             return EncodeLong(numbers);
+        }
+
+        /// <summary>Indicates if <paramref name="value"/> is a non-null, non-empty string containing only an even number of hexadecimal (base 16) digit characters (<c>0, 1, 2, 3, 4, 5, 6, 7, 8, 9, A, B, C, D, E, F</c>).</summary>
+        protected static bool IsNonemptyHexString( [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                bool isHexDigit = (
+                    (c >= '0' && c <= '9')
+                    ||
+                    (c >= 'A' && c <= 'F')
+                    ||
+                    (c >= 'a' && c <= 'f')
+                );
+
+                if (!isHexDigit) return false;
+            }
+
+            return true;
         }
 
         /// <summary>
