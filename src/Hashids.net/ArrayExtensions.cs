@@ -68,4 +68,45 @@ namespace HashidsNet
         }
 #endif
     }
+
+    internal static class RentedBuffer
+    {
+        /// <summary>Rents a new buffer from <see cref="ArrayPool{T}.Shared"/> and wraps it in a <see cref="RentedBuffer{T}"/>, wrap it in a <c>using</c> block for fire-and-forget safety so you don't need to forget to call <see cref="ArrayPool{T}.Return(T[], bool)"/>.</summary>
+        public static RentedBuffer<T> Rent<T>(int length, out T[] array)
+        {
+            RentedBuffer<T> rented = new RentedBuffer<T>(length);
+            array = rented.Array;
+            return rented;
+        }
+
+        /// <summary>Rents a new buffer from <see cref="ArrayPool{T}.Shared"/> with (at least) <paramref name="source"/>'s length, and then copies <paramref name="source"/> into the output <paramref name="array"/>.</summary>
+        public static RentedBuffer<T> RentCopy<T>(T[] source, out T[] array)
+        {
+            RentedBuffer<T> rented = new RentedBuffer<T>(source.Length);
+            array = rented.Array;
+            Array.Copy(sourceArray: source, sourceIndex: 0, destinationArray: array, destinationIndex: 0, length: source.Length);
+            return rented;
+        }
+    }
+
+    internal ref struct RentedBuffer<T>// : IDisposable
+    {
+        private readonly int length;
+        private readonly T[] array; // Careful, don't use `array.Length` as it can be larger than `this.length`!
+
+        public RentedBuffer(int length)
+        {
+            this.length = length;
+            this.array = ArrayPool<T>.Shared.Rent(length);
+        }
+
+        public T[] Array  => this.array;
+        public int Length => this.length;
+        public int Count  => this.length;
+
+        public void Dispose()
+        {
+            ArrayPool<T>.Shared.Return(this.array);
+        }
+    }
 }

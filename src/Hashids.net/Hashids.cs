@@ -171,7 +171,7 @@ namespace HashidsNet
         public string EncodeLong(IEnumerable<long> numbers) => EncodeLong(numbers.ToArray());
 
         /// <summary>
-        /// Decodes the provided hash into numbers.
+        /// Decodes the provided hash into <see cref="Int32"/> numbers.
         /// </summary>
         /// <param name="hash">Hash string to decode.</param>
         /// <returns>Array of integers.</returns>
@@ -179,7 +179,7 @@ namespace HashidsNet
         public virtual int[] Decode(string hash) => Array.ConvertAll(GetNumbersFrom(hash), n => (int)n);
 
         /// <summary>
-        /// Decodes the provided hash into numbers.
+        /// Decodes the provided hash into <see cref="Int64"/> numbers.
         /// </summary>
         /// <param name="hash">Hash string to decode.</param>
         /// <returns>Array of 64-bit integers.</returns>
@@ -248,14 +248,13 @@ namespace HashidsNet
 
             var builder = _sbPool.Get();
 
-            char[] shuffleBuffer = null;
-            var alphabet = _alphabet.CopyPooled();
-            var hashBuffer = ArrayPool<char>.Shared.Rent(MaxNumberHashLength);
-            try
+            using(RentedBuffer.Rent    (_alphabet.Length   , out char[] shuffleBuffer))
+            using(RentedBuffer.RentCopy(_alphabet          , out char[] alphabet))
+            using(RentedBuffer.Rent    (MaxNumberHashLength, out char[] hashBuffer))
             {
                 var lottery = alphabet[numbersHashInt % _alphabet.Length];
                 builder.Append(lottery);
-                shuffleBuffer = CreatePooledBuffer(_alphabet.Length, lottery);
+                InitShuffleBuffer(shuffleBuffer, lottery, _salt);
 
                 var startIndex = 1 + _salt.Length;
                 var length = _alphabet.Length - startIndex;
@@ -319,12 +318,6 @@ namespace HashidsNet
                     }
                 }
             }
-            finally
-            {
-                alphabet.ReturnToPool();
-                shuffleBuffer.ReturnToPool();
-                hashBuffer.ReturnToPool();
-            }
 
             var result = builder.ToString();
             _sbPool.Return(builder);
@@ -381,11 +374,11 @@ namespace HashidsNet
             hashArray = hashBreakdown.Split(_seps, StringSplitOptions.RemoveEmptyEntries);
 
             var result = new long[hashArray.Length];
-            char[] buffer = null;
-            var alphabet = _alphabet.CopyPooled();
-            try
+
+            using(RentedBuffer.RentCopy(_alphabet       , out char[] alphabet))
+            using(RentedBuffer.Rent    (_alphabet.Length, out char[] buffer))
             {
-                buffer = CreatePooledBuffer(_alphabet.Length, lottery);
+                InitShuffleBuffer(buffer, lottery, _salt);
 
                 var startIndex = 1 + _salt.Length;
                 var length = _alphabet.Length - startIndex;
@@ -403,11 +396,6 @@ namespace HashidsNet
                     result[j] = Unhash(subHash, alphabet);
                 }
             }
-            finally
-            {
-                alphabet.ReturnToPool();
-                buffer.ReturnToPool();
-            }
 
             if (EncodeLong(result) == hash)
             {
@@ -417,12 +405,17 @@ namespace HashidsNet
             return Array.Empty<long>();
         }
 
-        private char[] CreatePooledBuffer(int alphabetLength, char lottery)
+        /// <summary>Sets <c><paramref name="shuffleBuffer"/>[0] = <paramref name="lottery"/></c>, and then copies chars from <c>offset: 0</c> in <paramref name="salt"/> into <paramref name="shuffleBuffer"/> (from <c>offset: 1</c>).</summary>
+        private static void InitShuffleBuffer(char[] shuffleBuffer, char lottery, ReadOnlySpan<char> salt)
         {
-            var buffer = ArrayPool<char>.Shared.Rent(alphabetLength);
-            buffer[0] = lottery;
-            Array.Copy(_salt, 0, buffer, 1, Math.Min(_salt.Length, alphabetLength - 1));
-            return buffer;
+            shuffleBuffer[0] = lottery;
+
+            int copyCount = Math.Min(salt.Length, shuffleBuffer.Length - 1);
+
+            for (int i = 0; i < copyCount; i++)
+            {
+                shuffleBuffer[i + 1] = salt[i];
+            }
         }
 
         /// <summary>NOTE: This method mutates the <paramref name="alphabet"/> argument in-place.</summary>
